@@ -45,6 +45,7 @@ _ALL_TOOLS: frozenset[str] = frozenset(
         "get_mental_model",
         "create_mental_model",
         "update_mental_model",
+        "restore_mental_model",
         "delete_mental_model",
         "refresh_mental_model",
         "clear_mental_model",
@@ -601,6 +602,7 @@ def register_mcp_tools(
         "get_mental_model",
         "create_mental_model",
         "update_mental_model",
+        "restore_mental_model",
         "delete_mental_model",
         "refresh_mental_model",
         "clear_mental_model",
@@ -662,6 +664,9 @@ def register_mcp_tools(
 
     if "update_mental_model" in tools_to_register:
         _register_update_mental_model(mcp, memory, config)
+
+    if "restore_mental_model" in tools_to_register:
+        _register_restore_mental_model(mcp, memory, config)
 
     if "delete_mental_model" in tools_to_register:
         _register_delete_mental_model(mcp, memory, config)
@@ -859,6 +864,7 @@ _AUDITABLE_MCP_TOOLS: frozenset[str] = frozenset(
         "clear_memories",
         "create_mental_model",
         "update_mental_model",
+        "restore_mental_model",
         "delete_mental_model",
         "refresh_mental_model",
         "clear_mental_model",
@@ -2201,6 +2207,61 @@ def _register_update_mental_model(mcp: FastMCP, memory: MemoryEngine, config: MC
                     tags_match,
                     trigger_refresh_after_consolidation,
                 ),
+            )
+
+
+def _register_restore_mental_model(mcp: FastMCP, memory: MemoryEngine, config: MCPToolsConfig) -> None:
+    """Register the restore_mental_model tool."""
+
+    async def _run(target_bank: str, mental_model_id: str, history_entry_id: int) -> Any:
+        try:
+            model = await memory.restore_mental_model(
+                bank_id=target_bank,
+                mental_model_id=mental_model_id,
+                history_entry_id=history_entry_id,
+                request_context=_get_request_context(config),
+            )
+        except ValueError as e:
+            raise _ToolError(str(e)) from e
+        if model is None:
+            raise _ToolError(
+                f"Mental model '{mental_model_id}' or history entry '{history_entry_id}' "
+                f"not found in bank '{target_bank}'"
+            )
+        return model
+
+    if config.include_bank_id_param:
+
+        @mcp.tool(annotations=_tool_annotations("restore_mental_model"))
+        async def restore_mental_model(
+            mental_model_id: str,
+            history_entry_id: int,
+            bank_id: str | None = None,
+        ) -> str:
+            """Restore a mental model's content from a version in its history.
+
+            The current content is saved as a new history entry, so this operation
+            can itself be undone by restoring that new entry.
+            """
+            return await _run_tool(
+                config,
+                bank_id=bank_id,
+                as_json=True,
+                action="restoring mental model",
+                run=lambda target_bank: _run(target_bank, mental_model_id, history_entry_id),
+            )
+
+    else:
+
+        @mcp.tool(annotations=_tool_annotations("restore_mental_model"))
+        async def restore_mental_model(mental_model_id: str, history_entry_id: int) -> dict:
+            """Restore a mental model's content from a version in its history."""
+            return await _run_tool(
+                config,
+                bank_id=None,
+                as_json=False,
+                action="restoring mental model",
+                run=lambda target_bank: _run(target_bank, mental_model_id, history_entry_id),
             )
 
 

@@ -17168,7 +17168,7 @@ class MemoryEngine(MemoryEngineInterface):
             # live in the JSONB ``content`` blob.
             rows = await conn.fetch(
                 f"""
-                SELECT content, changed_at
+                SELECT id, content, changed_at
                 FROM {fq_table("mental_model_history")}
                 WHERE mental_model_id = $1 AND bank_id = $2
                 ORDER BY changed_at DESC, id DESC
@@ -17184,6 +17184,7 @@ class MemoryEngine(MemoryEngineInterface):
                 content = content or {}
                 changed_at = r["changed_at"]
                 entry = {
+                    "id": r["id"],
                     "previous_content": content.get("previous_content"),
                     "previous_reflect_response": content.get("previous_reflect_response"),
                     "changed_at": changed_at.isoformat() if hasattr(changed_at, "isoformat") else changed_at,
@@ -17200,6 +17201,55 @@ class MemoryEngine(MemoryEngineInterface):
                     entry["error_message"] = content.get("error_message")
                 result.append(entry)
             return result
+
+    async def restore_mental_model(
+        self,
+        bank_id: str,
+        mental_model_id: str,
+        history_entry_id: int,
+        *,
+        request_context: "RequestContext",
+    ) -> dict | None:
+        """Restore a mental model from one of its version history entries.
+
+        The selected history row contains the content that preceded a previous
+        write. The restore goes through ``update_mental_model`` so the current
+        content is recorded as a new, reversible history entry and the search
+        index is kept in sync. Failure records are intentionally not restorable.
+        """
+        await self._authenticate_tenant(request_context)
+        backend = await self._get_backend()
+        async with acquire_with_retry(backend) as conn:
+            row = await conn.fetchrow(
+                f"""
+                SELECT h.content
+                FROM {fq_table("mental_model_history")} h
+                JOIN {fq_table("mental_models")} m
+                  ON m.bank_id = h.bank_id AND m.id = h.mental_model_id
+                WHERE h.id = $1 AND h.bank_id = $2 AND h.mental_model_id = $3
+                """,
+                history_entry_id,
+                bank_id,
+                mental_model_id,
+            )
+        if row is None:
+            return None
+
+        content = row["content"]
+        if isinstance(content, str):
+            content = json.loads(content) if content else {}
+        content = content or {}
+        if content.get("kind") == _MM_HISTORY_KIND_FAILURE:
+            raise ValueError("The selected history entry is a failed refresh, not a content version")
+        if "previous_content" not in content or content["previous_content"] is None:
+            raise ValueError("The selected history entry has no restorable content")
+
+        return await self.update_mental_model(
+            bank_id=bank_id,
+            mental_model_id=mental_model_id,
+            content=content["previous_content"],
+            request_context=request_context,
+        )
 
     async def _mental_model_embedding_vector(self, name: str, content: str) -> list[float] | None:
         """The page embedding as a vector. Over name + content, matching what BM25 indexes."""

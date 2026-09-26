@@ -6776,6 +6776,47 @@ def _register_routes(app: FastAPI):
             raise _internal_error(e, f"GET /v1/default/banks/{bank_id}/mental-models/{mental_model_id}/history")
 
     @app.post(
+        "/v1/default/banks/{bank_id}/mental-models/{mental_model_id}/history/{history_entry_id}/restore",
+        response_model=MentalModelResponse,
+        summary="Restore a mental model history entry",
+        description=(
+            "Restore the content saved in a mental model history entry. "
+            "The current content is saved as a new history entry, so the restore is reversible."
+        ),
+        operation_id="restore_mental_model_history",
+        tags=["Mental Models"],
+    )
+    @audited("restore_mental_model_history", request_param=None)
+    async def api_restore_mental_model_history(
+        bank_id: str,
+        mental_model_id: str,
+        history_entry_id: int,
+        request_context: RequestContext = Depends(get_request_context),
+    ):
+        """Restore content from a mental model history entry."""
+        try:
+            mental_model = await app.state.memory.restore_mental_model(
+                bank_id=bank_id,
+                mental_model_id=mental_model_id,
+                history_entry_id=history_entry_id,
+                request_context=request_context,
+            )
+            if mental_model is None:
+                raise HTTPException(status_code=404, detail="Mental model or history entry not found")
+            return MentalModelResponse(**mental_model)
+        except OperationValidationError as e:
+            raise HTTPException(status_code=e.status_code, detail=e.reason)
+        except (AuthenticationError, HTTPException):
+            raise
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+        except Exception as e:
+            raise _internal_error(
+                e,
+                f"POST /v1/default/banks/{bank_id}/mental-models/{mental_model_id}/history/{history_entry_id}/restore",
+            )
+
+    @app.post(
         "/v1/default/banks/{bank_id}/mental-models",
         response_model=CreateMentalModelResponse,
         summary="Create mental model",

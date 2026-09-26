@@ -138,6 +138,7 @@ def create_mcp_server(memory: MemoryEngine, multi_bank: bool = True) -> FastMCP:
             "get_mental_model",
             "create_mental_model",
             "update_mental_model",
+            "restore_mental_model",
             "delete_mental_model",
             "refresh_mental_model",
             "clear_mental_model",
